@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SUF Obedník – Web Access Proof of Concept</title>
+<!--
+  ============================================================================
+  SUF Obedník – Web Access Proof of Concept
+  ============================================================================
+  PURPOSE
+    Find out whether an ordinary website (no browser extension) can read or
+    modify the school lunch system page (phpBox / Apetit at 194.160.223.198)
+    after the user has logged in, the way the Chrome extension does.
+
+  WHAT IS THE SAME ORIGIN POLICY (SOP)?
+    An "origin" is the combination of   scheme + host + port
+      e.g.  http://194.160.223.198:80        <- the lunch system
+            file://                           <- this file opened from disk
+            https://example.github.io:443     <- this file hosted online
+    Browsers only let JavaScript touch the content of another window/tab if
+    both pages have EXACTLY the same origin. Otherwise the page can still
+    hold a reference to the other tab (window.open returns one), but it may
+    only do a handful of harmless things with it: close it, focus it, send it
+    a message via postMessage(), or navigate it to a new URL. Reading its
+    document, cookies, URL or DOM throws a "SecurityError".
+
+  WHY DOES THIS MATTER HERE?
+    The lunch system page belongs to http://194.160.223.198. This test page
+    will never have that origin (unless it were hosted on that very server),
+    so the browser is expected to block every attempt to read the meal table.
+    This is a deliberate security feature: otherwise any website you visit
+    could read your bank, e-mail or school account in another tab.
+
+    Fetching the page directly with fetch()/XMLHttpRequest is blocked as well,
+    by the related CORS rules: the lunch server does not send an
+    "Access-Control-Allow-Origin" header, so the browser hides the response.
+
+  WHY DOES THE EXTENSION WORK?
+    A Chrome extension declares "host_permissions" for 194.160.223.198 and
+    its content script runs INSIDE the lunch page, so SOP does not apply.
+  ============================================================================
+-->
+<style>
+  :root {
+    --bg: #f4f6fb;
+    --card: #ffffff;
+    --text: #1d2433;
+    --muted: #5d6779;
+    --primary: #2f6fed;
+    --primary-dark: #1f56c4;
+    --secondary: #7a4dd8;
+    --secondary-dark: #5f37b5;
+    --ok: #1f9d55;
+    --warn: #c98a00;
+    --err: #d23c3c;
+    --info: #2f6fed;
+    --border: #e1e5ee;
+    --radius: 14px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c;
+      --card: #1b2029;
+      --text: #e7ebf3;
+      --muted: #9aa4b8;
+      --border: #2c3341;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 24px 16px 48px;
+  }
+  header h1 { margin: 0 0 4px; font-size: 1.8rem; }
+  header p { margin: 0 0 20px; color: var(--muted); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, .04);
+  }
+  .card h2 { margin: 0 0 12px; font-size: 1.15rem; }
+  ol.steps { margin: 0; padding-left: 1.3em; }
+  ol.steps li { margin-bottom: 6px; }
+  .buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 600px) { .buttons { grid-template-columns: 1fr; } }
+  button {
+    font: inherit;
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    padding: 22px 18px;
+    cursor: pointer;
+    transition: background .15s, transform .05s;
+  }
+  button:active { transform: translateY(1px); }
+  button small { display: block; font-weight: 400; font-size: .85rem; opacity: .85; margin-top: 4px; }
+  #openBtn { background: var(--primary); }
+  #openBtn:hover { background: var(--primary-dark); }
+  #injectBtn { background: var(--secondary); }
+  #injectBtn:hover { background: var(--secondary-dark); }
+  #clearBtn {
+    font-size: .85rem; padding: 6px 12px; background: transparent;
+    color: var(--muted); border: 1px solid var(--border);
+  }
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 10px;
+  }
+  .status-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: var(--muted); flex-shrink: 0;
+  }
+  .dot.ok { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.err { background: var(--err); }
+  .status-item .label { font-size: .8rem; color: var(--muted); }
+  .status-item .value { font-weight: 600; }
+  #verdict {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    border-left: 5px solid var(--muted);
+    background: rgba(127, 127, 127, .08);
+  }
+  #verdict.ok { border-color: var(--ok); background: rgba(31, 157, 85, .1); }
+  #verdict.err { border-color: var(--err); background: rgba(210, 60, 60, .1); }
+  #verdict.warn { border-color: var(--warn); background: rgba(201, 138, 0, .1); }
+  .log-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .log-head h2 { margin: 0; }
+  #log {
+    height: 340px;
+    overflow-y: auto;
+    background: #0f131a;
+    color: #d8dee9;
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, Consolas, "Courier New", monospace;
+    font-size: .85rem;
+  }
+  #log .line { padding: 2px 0; white-space: pre-wrap; word-break: break-word; }
+  #log .time { color: #6c7a91; margin-right: 8px; }
+  #log .info { color: #8fb8ff; }
+  #log .ok { color: #6fe39d; }
+  #log .warn { color: #ffd166; }
+  #log .err { color: #ff7b7b; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details p, details li { color: var(--muted); }
+  code { background: rgba(127, 127, 127, .15); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>🍲 SUF Obedník – Web Access Test</h1>
+    <p>Can a normal web page (without the Chrome extension) read the school lunch menu? Let's find out.</p>
+  </header>
+
+  <section class="card">
+    <h2>How to use this test</h2>
+    <ol class="steps">
+      <li>Click <strong>Open School Lunch System</strong>. The lunch system opens in a new tab.</li>
+      <li>In that new tab, <strong>log in</strong> with your usual school lunch account.</li>
+      <li><strong>Go to the menu page</strong> that shows the meals for the week.</li>
+      <li><strong>Come back to this tab</strong> (leave the lunch tab open!).</li>
+      <li>Click <strong>Inject Script</strong> and read the result in the status panel below.</li>
+    </ol>
+  </section>
+
+  <section class="card">
+    <div class="buttons">
+      <button id="openBtn" type="button">
+        Open School Lunch System
+        <small>Step 1 – opens in a new tab</small>
+      </button>
+      <button id="injectBtn" type="button">
+        Inject Script
+        <small>Step 2 – after logging in</small>
+      </button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Status</h2>
+    <div class="status-grid">
+      <div class="status-item"><span class="dot" id="dot-tab"></span>
+        <div><div class="label">Tab reference</div><div class="value" id="st-tab">Not opened yet</div></div></div>
+      <div class="status-item"><span class="dot" id="dot-origin"></span>
+        <div><div class="label">Same Origin Policy</div><div class="value" id="st-origin">Not tested</div></div></div>
+      <div class="status-item"><span class="dot" id="dot-read"></span>
+        <div><div class="label">Read page content</div><div class="value" id="st-read">Not tested</div></div></div>
+      <div class="status-item"><span class="dot" id="dot-inject"></span>
+        <div><div class="label">Run script in tab</div><div class="value" id="st-inject">Not tested</div></div></div>
+      <div class="status-item"><span class="dot" id="dot-fetch"></span>
+        <div><div class="label">Direct download (fetch)</div><div class="value" id="st-fetch">Not tested</div></div></div>
+    </div>
+    <div id="verdict">Run the test to see the verdict.</div>
+  </section>
+
+  <section class="card">
+    <div class="log-head">
+      <h2>Detailed log</h2>
+      <button id="clearBtn" type="button">Clear log</button>
+    </div>
+    <div id="log" aria-live="polite"></div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary>Why might this fail? (Same Origin Policy explained simply)</summary>
+      <p>Your browser treats every website as a separate, locked room. A page from one website
+        is not allowed to look inside a page from another website – even if both are open in your
+        browser at the same time. This is called the <strong>Same Origin Policy</strong>.</p>
+      <p>This test page and the lunch system (<code>http://194.160.223.198</code>) are different
+        "rooms", so the browser should refuse to let this page read the meal list. That is a good
+        thing: it is the same protection that stops a random website from reading your e-mail or bank account.</p>
+      <p>If access is blocked, the realistic options are:</p>
+      <ul>
+        <li><strong>Chrome extension</strong> – what SUF Obedník already is; it runs inside the lunch page with permission.</li>
+        <li><strong>Mobile app with a WebView</strong> – the app loads the lunch page itself and injects JavaScript into it.</li>
+        <li><strong>Bookmarklet / userscript</strong> – a small script the user runs while the lunch page is open, so it runs inside that page.</li>
+      </ul>
+    </details>
+  </section>
+</main>
+
+<script>
+(() => {
+  'use strict';
+
+  const LUNCH_URL = 'http://194.160.223.198/index.php/';
+  const LUNCH_ORIGIN = new URL(LUNCH_URL).origin;
+
+  /** Reference to the opened lunch tab (a WindowProxy), or null. */
+  let lunchWin = null;
+
+  // ---------------------------------------------------------------- UI helpers
+  const $ = (id) => document.getElementById(id);
+  const logEl = $('log');
+
+  function log(level, message, detail) {
+    const line = document.createElement('div');
+    line.className = 'line';
+    const time = document.createElement('span');
+    time.className = 'time';
+    time.textContent = new Date().toLocaleTimeString();
+    const text = document.createElement('span');
+    text.className = level;
+    text.textContent = message + (detail !== undefined ? '\n    ' + detail : '');
+    line.append(time, text);
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+
+    const consoleFn = { err: 'error', warn: 'warn' }[level] || 'log';
+    console[consoleFn]('[SUF PoC] ' + message, detail !== undefined ? detail : '');
+  }
+
+  /** level: 'ok' | 'warn' | 'err' | '' */
+  function setStatus(key, level, text) {
+    $('dot-' + key).className = 'dot' + (level ? ' ' + level : '');
+    $('st-' + key).textContent = text;
+  }
+
+  function setVerdict(level, html) {
+    const v = $('verdict');
+    v.className = level;
+    v.innerHTML = html;
+  }
+
+  function describeError(e) {
+    if (!e) return 'unknown error';
+    return (e.name || 'Error') + ': ' + (e.message || String(e));
+  }
+
+  /** SecurityError is what the browser throws when SOP blocks access. */
+  function isSopError(e) {
+    return e && (e.name === 'SecurityError' || /cross-origin|Blocked a frame|Permission denied/i.test(e.message || ''));
+  }
+
+  // ------------------------------------------------------------- environment
+  log('info', 'Test page loaded.');
+  log('info', 'This page origin: ' + (location.origin === 'null' ? 'null (opened as a local file)' : location.origin));
+  log('info', 'Lunch system origin: ' + LUNCH_ORIGIN);
+  if (location.origin === LUNCH_ORIGIN) {
+    log('warn', 'This page has the SAME origin as the lunch system, so SOP will NOT block access. ' +
+      'That only happens if this file is hosted on the lunch server itself.');
+  } else {
+    log('info', 'Origins differ -> the Same Origin Policy is expected to block reading the lunch tab.');
+  }
+
+  // ---------------------------------------------------- Step 1: open the tab
+  $('openBtn').addEventListener('click', () => {
+    try {
+      // NOTE: no "noopener" – we deliberately keep a reference to the new tab.
+      lunchWin = window.open(LUNCH_URL, 'suf_lunch_tab');
+    } catch (e) {
+      lunchWin = null;
+      log('err', 'window.open() threw an exception.', describeError(e));
+    }
+
+    if (!lunchWin) {
+      setStatus('tab', 'err', 'Blocked / not opened');
+      log('err', 'window.open() returned null. The pop-up was probably blocked. ' +
+        'Allow pop-ups for this page and try again.');
+      return;
+    }
+
+    setStatus('tab', 'ok', 'Tab opened');
+    log('ok', 'Lunch system opened in a new tab. We hold a reference to it (WindowProxy).');
+    log('info', 'Now log in, open the menu page, then come back and click "Inject Script".');
+  });
+
+  // ------------------------------------------------- Step 2: diagnostic tests
+  $('injectBtn').addEventListener('click', async () => {
+    log('info', '================ Running diagnostics ================');
+    const r = { tab: false, sop: null, read: false, inject: false, fetch: null };
+
+    // --- Test 1: does the tab reference exist? -------------------------------
+    if (!lunchWin) {
+      setStatus('tab', 'err', 'No reference');
+      log('err', 'Test 1 – No tab reference. Click "Open School Lunch System" first ' +
+        '(the reference is lost if this page was reloaded).');
+    } else {
+      let closed;
+      try {
+        closed = lunchWin.closed; // "closed" is allowed even cross-origin
+      } catch (e) {
+        log('err', 'Test 1 – Reading tab.closed threw an exception.', describeError(e));
+      }
+      if (closed) {
+        setStatus('tab', 'err', 'Tab was closed');
+        log('err', 'Test 1 – The lunch tab has been closed. Open it again.');
+      } else if (closed === false) {
+        r.tab = true;
+        setStatus('tab', 'ok', 'Exists & open');
+        log('ok', 'Test 1 – Tab reference exists and the tab is still open.');
+        // If the server sends Cross-Origin-Opener-Policy, the link to the tab is severed:
+        // the tab is open, but our reference reports closed=true right after navigation.
+      }
+    }
+
+    if (r.tab) {
+      // --- Test 2: can we read the tab URL? (first SOP check) ----------------
+      log('info', 'Test 2 – Attempting to read tab.location.href …');
+      try {
+        const href = lunchWin.location.href;
+        // If we get here the browser allowed it (same origin, or no COOP/SOP issue)
+        r.sop = false;
+        setStatus('origin', 'warn', 'NOT blocked (!)');
+        log('warn', 'Test 2 – We CAN read the tab URL: ' + href);
+        log('warn', 'SOP is NOT blocking access. This should only happen if origins match.');
+      } catch (e) {
+        if (isSopError(e)) {
+          r.sop = true;
+          setStatus('origin', 'ok', 'Blocked (expected)');
+          log('ok', 'Test 2 – Reading tab URL was blocked by SOP (expected).', describeError(e));
+        } else {
+          r.sop = true;
+          setStatus('origin', 'warn', 'Exception (not SOP)');
+          log('warn', 'Test 2 – Reading tab URL threw a non-SOP exception.', describeError(e));
+        }
+      }
+
+      // --- Test 3: can we read the tab DOM? -----------------------------------
+      log('info', 'Test 3 – Attempting to read tab.document.body.innerHTML …');
+      try {
+        const html = lunchWin.document.body.innerHTML;
+        r.read = true;
+        setStatus('read', 'warn', 'Readable (!)');
+        log('warn', 'Test 3 – We CAN read the tab DOM! First 200 chars:');
+        log('warn', html.slice(0, 200));
+      } catch (e) {
+        setStatus('read', 'ok', 'Blocked (expected)');
+        log('ok', 'Test 3 – Reading tab DOM was blocked.', describeError(e));
+      }
+
+      // --- Test 4: can we run script inside the tab? --------------------------
+      log('info', 'Test 4 – Attempting to call a function in the tab context …');
+      try {
+        // evaluating expressions on lunchWin's context directly is impossible,
+        // but we can try to reach a known global as a proxy
+        const title = lunchWin.document.title;
+        r.inject = true;
+        setStatus('inject', 'warn', 'Script ran (!)');
+        log('warn', 'Test 4 – Accessed tab document.title: "' + title + '"');
+      } catch (e) {
+        setStatus('inject', 'ok', 'Blocked (expected)');
+        log('ok', 'Test 4 – Running script in the tab was blocked.', describeError(e));
+      }
+    } else {
+      // No tab reference – mark remaining tests as skipped
+      ['origin', 'read', 'inject'].forEach(k => setStatus(k, 'warn', 'Skipped (no tab)'));
+      log('warn', 'Tests 2–4 skipped because there is no open tab reference.');
+    }
+
+    // --- Test 5: direct fetch (CORS check) ------------------------------------
+    log('info', 'Test 5 – Attempting direct fetch() of the lunch page …');
+    try {
+      const res = await fetch(LUNCH_URL, { mode: 'cors', credentials: 'include' });
+      r.fetch = true;
+      setStatus('fetch', 'warn', 'Fetch succeeded (!)');
+      log('warn', 'Test 5 – fetch() returned HTTP ' + res.status + '. CORS is NOT blocking the response.');
+      log('warn', 'Content-Type: ' + (res.headers.get('content-type') || '(none)'));
+    } catch (e) {
+      r.fetch = false;
+      setStatus('fetch', 'ok', 'Blocked (expected)');
+      log('ok', 'Test 5 – fetch() was blocked (expected – CORS / network).', describeError(e));
+    }
+
+    // --- Verdict -----------------------------------------------------------
+    const allBlocked = !r.read && !r.inject && r.fetch === false;
+    const tabOk = r.tab;
+
+    if (!tabOk) {
+      setVerdict('warn',
+        '⚠️ <strong>No tab reference.</strong> Open the lunch system first (Step 1), then run the test.');
+    } else if (allBlocked) {
+      setVerdict('err',
+        '🔒 <strong>Access fully blocked.</strong> The Same Origin Policy and CORS together prevent ' +
+        'this web page from reading or scripting the lunch system. ' +
+        'A <strong>Chrome extension</strong> (like SUF Obedník) is required for this to work.');
+    } else if (r.read || r.inject) {
+      setVerdict('ok',
+        '✅ <strong>Surprising: access was NOT fully blocked.</strong> The page may be reachable. ' +
+        'Check the log for details – this likely means origins match or the browser is unusually permissive.');
+    } else {
+      setVerdict('warn',
+        '⚠️ <strong>Partial results.</strong> Some tests could not complete. See the log for details.');
+    }
+
+    log('info', '================ Diagnostics complete ================');
+  });
+
+  // ----------------------------------------------------- Clear log button
+  $('clearBtn').addEventListener('click', () => {
+    logEl.innerHTML = '';
+    log('info', 'Log cleared.');
+  });
+
+})();
+</script>
+</body>
+</html>

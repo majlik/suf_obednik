@@ -1,0 +1,15 @@
+{
+  "name": "suf-obednik-proxy",
+  "version": "1.0.0",
+  "description": "Reverse proxy for the SUF school lunch system with meal image enrichment",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^2.7.0",
+    "http-proxy-middleware": "^2.0.6"
+  }
+}
