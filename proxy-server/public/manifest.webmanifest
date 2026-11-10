@@ -1,0 +1,13 @@
+{
+  "name": "SUF Obedník",
+  "short_name": "Obedník",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": [
+    { "src": "/icon/48.png",  "sizes": "48x48",   "type": "image/png" },
+    { "src": "/icon/96.png",  "sizes": "96x96",   "type": "image/png" },
+    { "src": "/icon/128.png", "sizes": "128x128", "type": "image/png" }
+  ]
+}

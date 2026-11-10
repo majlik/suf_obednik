@@ -151,30 +151,30 @@
 
     function closeSave() {
       // Persist current state and update the badge thumbnail.
-      console.log('[SUF] closeSave: imgIdx=', imgIdx, 'images.length=', images.length);
       const dataToSave = { cleanName, images, isFallback, selectedIndex: imgIdx };
       setCached(cleanName, dataToSave);
-      if (badgeEl) {
-        console.log('[SUF] calling updateBadge with selectedIndex=', imgIdx);
-        updateBadge(badgeEl, dataToSave);
-      } else {
-        console.warn('[SUF] no badgeEl — thumbnail will not update');
-      }
+      if (badgeEl) updateBadge(badgeEl, dataToSave);
       closeModal();
     }
+
+    // On phones the modal is a bottom sheet: full width, anchored to the bottom.
+    const isPhone = window.matchMedia('(max-width: 600px)').matches;
 
     const overlay = document.createElement('div');
     overlay.style.cssText = [
       'position:fixed', 'inset:0', 'z-index:999999',
       'background:rgba(0,0,0,0.75)', 'display:flex',
-      'align-items:center', 'justify-content:center', 'padding:16px',
+      `align-items:${isPhone ? 'flex-end' : 'center'}`, 'justify-content:center',
+      `padding:${isPhone ? '0' : '16px'}`,
     ].join(';');
     overlay.addEventListener('click', e => { if (e.target === overlay) closeSave(); });
 
     const card = document.createElement('div');
     card.style.cssText = [
-      'background:#fff', 'border-radius:16px', 'max-width:420px', 'width:100%',
+      'background:#fff', `border-radius:${isPhone ? '20px 20px 0 0' : '16px'}`,
+      `max-width:${isPhone ? '100%' : '420px'}`, 'width:100%', 'box-sizing:border-box',
       'max-height:90vh', 'overflow-y:auto', 'padding:20px',
+      'padding-bottom:calc(20px + env(safe-area-inset-bottom))',
       'box-shadow:0 8px 32px rgba(0,0,0,0.3)', 'display:flex',
       'flex-direction:column', 'gap:12px',
     ].join(';');
@@ -214,6 +214,18 @@
     }
     renderImage();
 
+    // Swipe left/right on the image to browse photos.
+    let touchX = null;
+    imgBox.addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, { passive: true });
+    imgBox.addEventListener('touchend', e => {
+      if (touchX === null || images.length < 2) return;
+      const dx = e.changedTouches[0].clientX - touchX;
+      touchX = null;
+      if (Math.abs(dx) < 40) return;
+      imgIdx = (imgIdx + (dx < 0 ? 1 : images.length - 1)) % images.length;
+      renderImage();
+    });
+
     // Title
     const title = document.createElement('div');
     title.style.cssText = 'font-size:17px;font-weight:600;color:#1a1a1a;';
@@ -241,10 +253,10 @@
     const customInput = document.createElement('input');
     customInput.type = 'text';
     customInput.placeholder = 'Vlastný výraz na hľadanie...';
-    customInput.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;font-size:14px;border:1px solid #ccc;border-radius:8px;margin-bottom:6px;';
+    customInput.style.cssText = 'width:100%;box-sizing:border-box;min-height:44px;padding:8px 10px;font-size:16px;border:1px solid #ccc;border-radius:8px;margin-bottom:6px;';
     const customBtn = document.createElement('button');
     customBtn.textContent = 'Hľadať';
-    customBtn.style.cssText = 'padding:7px 16px;font-size:14px;border:none;border-radius:8px;background:#1565c0;color:#fff;cursor:pointer;';
+    customBtn.style.cssText = 'min-height:44px;padding:7px 16px;font-size:14px;border:none;border-radius:8px;background:#1565c0;color:#fff;cursor:pointer;';
     customArea.appendChild(customInput);
     customArea.appendChild(customBtn);
 
@@ -255,7 +267,7 @@
     function makeBtn(label, bg, fg, onClick) {
       const b = document.createElement('button');
       b.textContent = label;
-      b.style.cssText = `flex:1;min-width:100px;padding:10px 14px;font-size:14px;border:none;border-radius:8px;background:${bg};color:${fg};cursor:pointer;font-weight:500;`;
+      b.style.cssText = `flex:1;min-width:100px;min-height:44px;padding:10px 14px;font-size:14px;border:none;border-radius:8px;background:${bg};color:${fg};cursor:pointer;font-weight:500;`;
       b.addEventListener('click', onClick);
       return b;
     }
@@ -280,7 +292,7 @@
     const editLink = document.createElement('a');
     editLink.href = '#';
     editLink.textContent = '✏️ Upraviť hľadanie';
-    editLink.style.cssText = 'font-size:12px;color:#888;width:100%;text-align:center;';
+    editLink.style.cssText = 'font-size:13px;color:#888;width:100%;text-align:center;padding:10px 0;';
     editLink.addEventListener('click', e => {
       e.preventDefault();
       customArea.style.display = customArea.style.display === 'none' ? '' : 'none';

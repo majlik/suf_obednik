@@ -316,15 +316,13 @@ app.post('/api/order', async (req, res) => {
 // ---------------------------------------------------------------------------
 const TARGET_RE = /https?:\/\/194\.160\.223\.198(:\d+)?/g;
 const VIEWPORT  = '<meta name="viewport" content="width=device-width, initial-scale=1">';
-const STYLE = `<style>
-body { font-size: 16px !important; }
-table.apeBROW { width: 100% !important; }
-table.apeBROW td, table.apeBROW th { padding: 8px 6px !important; font-size: 14px !important; }
-input[type=submit], button { min-height: 44px !important; padding: 8px 14px !important; font-size: 15px !important; }
-img { max-width: 100%; height: auto; }
-.suf-meal-flex { display: flex !important; align-items: center !important; gap: 10px !important; min-height: 54px !important; }
-</style>`;
+// Mobile overrides live in public/suf-mobile.css; linked last in <head> so they win.
+const STYLE = '<link rel="stylesheet" type="text/css" href="/suf-mobile.css">';
 const SCRIPT = '<script src="/suf-inject.js"></script>';
+const FAVICON = '<link rel="icon" type="image/png" sizes="32x32" href="/icon/32.png">\n'
+  + '<link rel="apple-touch-icon" href="/icon/128.png">\n'
+  + '<link rel="manifest" href="/manifest.webmanifest">\n'
+  + '<meta name="theme-color" content="#2563eb">';
 
 function injectIntoHtml(html) {
   // Rewrite all absolute references to the target server so every link/form
@@ -333,7 +331,9 @@ function injectIntoHtml(html) {
 
   if (!html.includes('name="viewport"') && !html.includes("name='viewport'"))
     html = html.replace(/<head([^>]*)>/i, `<head$1>\n${VIEWPORT}`);
-  html = html.replace(/<\/head>/i,  `${STYLE}\n</head>`);
+  // Replace the original site's favicon with ours.
+  html = html.replace(/<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/gi, '');
+  html = html.replace(/<\/head>/i,  `${FAVICON}\n${STYLE}\n</head>`);
   html = html.replace(/<\/body>/i,  `${SCRIPT}\n</body>`);
   if (!html.includes('</body>')) html += SCRIPT;  // fallback
   return html;
