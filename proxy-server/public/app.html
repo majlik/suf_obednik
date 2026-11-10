@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="sk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>SUF Obedník</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#f0f4f8;--card:#fff;--primary:#2563eb;--primary-dark:#1d4ed8;
+  --text:#1e293b;--muted:#64748b;--border:#e2e8f0;
+  --ok:#16a34a;--warn:#d97706;--err:#dc2626;
+  --soup:#0ea5e9;--main:#8b5cf6;
+  --radius:16px;--radius-sm:10px;
+}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+#app{max-width:600px;margin:0 auto;padding:0 0 80px}
+
+/* Header */
+.hdr{background:var(--primary);color:#fff;padding:16px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,.2)}
+.hdr h1{font-size:1.1rem;font-weight:700;display:flex;align-items:center;gap:8px}
+.hdr-actions{display:flex;gap:8px}
+.icon-btn{background:rgba(255,255,255,.15);border:none;color:#fff;border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:1.1rem;transition:background .15s}
+.icon-btn:hover{background:rgba(255,255,255,.25)}
+
+/* Week nav */
+.week-nav{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:#fff;border-bottom:1px solid var(--border)}
+.week-nav button{background:none;border:1px solid var(--border);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:.9rem;color:var(--text)}
+.week-label{font-weight:600;font-size:.95rem;color:var(--text)}
+
+/* Day sections */
+.day{margin:12px 8px 0;border-radius:var(--radius);overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+.day-header{padding:12px 16px;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:space-between}
+.day-header h2{font-size:1rem;font-weight:600}
+.day-date{font-size:.8rem;opacity:.85}
+
+/* Meal cards */
+.meal{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;border-bottom:1px solid var(--border);cursor:pointer;transition:background .1s}
+.meal:last-child{border-bottom:none}
+.meal:active{background:#f8fafc}
+.meal-thumb{width:68px;height:52px;border-radius:var(--radius-sm);overflow:hidden;background:#f1f5f9;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.5rem;position:relative;border:1px solid var(--border)}
+.meal-thumb img{width:100%;height:100%;object-fit:cover}
+.meal-thumb .count{position:absolute;bottom:2px;right:3px;background:rgba(0,0,0,.55);color:#fff;font-size:9px;padding:1px 4px;border-radius:6px}
+.meal-info{flex:1;min-width:0}
+.meal-code{display:inline-block;font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:4px;margin-bottom:4px}
+.code-p{background:#e0f2fe;color:#0369a1}
+.code-n{background:#ede9fe;color:#6d28d9}
+.meal-name{font-size:.88rem;font-weight:500;line-height:1.35;color:var(--text)}
+.meal-allergens{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px}
+.alg{font-size:.7rem;background:#fef3c7;color:#92400e;border:1px solid #fde68a;padding:1px 5px;border-radius:6px}
+.meal-action{flex-shrink:0}
+.order-btn{border:none;border-radius:8px;padding:8px 14px;font-size:.8rem;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-order{background:var(--primary);color:#fff}
+.btn-order:hover{background:var(--primary-dark)}
+.btn-cancel{background:#fef2f2;color:var(--err);border:1px solid #fecaca}
+.btn-cancel:hover{background:#fee2e2}
+.btn-ordered{background:#f0fdf4;color:var(--ok);border:1px solid #bbf7d0;cursor:default}
+
+/* Loading / states */
+.state{text-align:center;padding:48px 24px;color:var(--muted)}
+.state .icon{font-size:2.5rem;margin-bottom:12px}
+.state h3{font-size:1.1rem;font-weight:600;margin-bottom:6px;color:var(--text)}
+.state p{font-size:.9rem}
+.spinner{width:36px;height:36px;border:3px solid #e2e8f0;border-top-color:var(--primary);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 16px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* Toast */
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#1e293b;color:#fff;padding:10px 20px;border-radius:999px;font-size:.88rem;z-index:9999;opacity:0;transition:opacity .3s;pointer-events:none;white-space:nowrap}
+.toast.show{opacity:1}
+
+/* Modal */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:flex;align-items:flex-end;justify-content:center;padding:0}
+.modal{background:#fff;border-radius:24px 24px 0 0;width:100%;max-width:600px;max-height:90vh;overflow-y:auto;padding-bottom:env(safe-area-inset-bottom)}
+.modal-img{width:100%;aspect-ratio:16/9;object-fit:cover;background:#0f172a;display:flex;align-items:center;justify-content:center;font-size:3rem;border-radius:24px 24px 0 0;overflow:hidden;position:relative}
+.modal-img img{width:100%;height:100%;object-fit:cover}
+.modal-img-counter{position:absolute;bottom:10px;right:12px;background:rgba(0,0,0,.6);color:#fff;font-size:.8rem;padding:2px 8px;border-radius:999px}
+.modal-body{padding:20px}
+.modal-title{font-size:1.1rem;font-weight:700;margin-bottom:10px}
+.modal-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)}
+.modal-actions button{flex:1;min-width:100px;padding:10px 14px;border-radius:10px;font-size:.88rem;font-weight:600;cursor:pointer;border:1px solid var(--border);background:#f8fafc;color:var(--text)}
+.modal-btn-primary{background:var(--primary)!important;color:#fff!important;border-color:var(--primary)!important}
+.modal-btn-danger{background:#fef2f2!important;color:var(--err)!important;border-color:#fecaca!important}
+
+/* Login screen */
+.login-screen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;text-align:center}
+.login-screen .logo{font-size:4rem;margin-bottom:16px}
+.login-screen h1{font-size:1.6rem;font-weight:700;margin-bottom:8px}
+.login-screen p{color:var(--muted);margin-bottom:32px;font-size:.95rem}
+.login-btn{background:var(--primary);color:#fff;border:none;border-radius:var(--radius);padding:16px 32px;font-size:1rem;font-weight:700;cursor:pointer;width:100%;max-width:300px}
+.login-btn:hover{background:var(--primary-dark)}
+
+/* Bottom nav */
+.bottom-nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--border);display:flex;z-index:100;padding-bottom:env(safe-area-inset-bottom)}
+.nav-item{flex:1;display:flex;flex-direction:column;align-items:center;padding:10px 4px 8px;cursor:pointer;color:var(--muted);border:none;background:none;font-size:.7rem;gap:3px}
+.nav-item.active{color:var(--primary)}
+.nav-icon{font-size:1.3rem}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast" id="toast"></div>
+<script>
+'use strict';
+
+// ── Allergen map ──────────────────────────────────────────────────────────
+const ALLERGENS = {
+  '1':'Lepok','2':'Kôrovce','3':'Vajcia','4':'Ryby','5':'Arašidy',
+  '6':'Sója','7':'Mlieko','8':'Orechy','9':'Zeler','10':'Horčica',
+  '11':'Sezam','12':'Siričitany','13':'Lupina','14':'Mäkkýše'
+};
+
+// ── State ─────────────────────────────────────────────────────────────────
+let state = { view:'loading', days:[], prevWeek:null, nextWeek:null, weekLabel:'', modal:null };
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function proxyImg(url){ return url ? '/api/img-proxy?url='+encodeURIComponent(url) : ''; }
+
+function imgCacheKey(name){ return 'suf_img_'+name.toLowerCase().replace(/\s+/g,'_'); }
+function imgCacheGet(name){
+  try{ const v=localStorage.getItem(imgCacheKey(name)); return v?JSON.parse(v):null; }catch{return null;}
+}
+function imgCacheSet(name,data){
+  try{ localStorage.setItem(imgCacheKey(name),JSON.stringify(data)); }catch{}
+}
+
+let toastTimer;
+function toast(msg,ms=2500){
+  const el=document.getElementById('toast');
+  el.textContent=msg; el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>el.classList.remove('show'),ms);
+}
+
+function parseTiers(name){
+  const words=name.split(/\s+/);
+  const t=[];
+  if(words.length>1) t.push(words.slice(0,Math.min(5,words.length)).join(' '));
+  if(words.length>3) t.push(words.slice(0,3).join(' '));
+  if(words.length>1) t.push(words.slice(0,2).join(' '));
+  return t.length ? [...new Set(t)] : [name];
+}
+
+// ── Image loader ──────────────────────────────────────────────────────────
+async function loadImage(meal){
+  const cached=imgCacheGet(meal.cleanName);
+  if(cached && !cached.isFallback) return cached;
+  const tiers=parseTiers(meal.cleanName);
+  const url='/api/image-search?name='+encodeURIComponent(meal.cleanName)
+    +'&tiers='+encodeURIComponent(tiers.join(','))+'&force=0&customQuery=';
+  try{
+    const r=await fetch(url);
+    const data=await r.json();
+    if(data.images && data.images.length) imgCacheSet(meal.cleanName,data);
+    return data;
+  }catch{ return {images:[],isFallback:true}; }
+}
+
+// ── API calls ─────────────────────────────────────────────────────────────
+async function fetchMeals(week){
+  const url='/api/meals'+(week?'?week='+week:'');
+  const r=await fetch(url);
+  if(r.status===401) return {error:'not_logged_in'};
+  if(!r.ok) return {error:'fetch_failed'};
+  return r.json();
+}
+
+async function placeOrder(meal, typ){
+  const r=await fetch('/api/order',{
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body:JSON.stringify({mealId:meal.mealId,week:meal.week,typ})
+  });
+  return r.json();
+}
+
+// ── Render helpers ────────────────────────────────────────────────────────
+function el(tag,cls,inner=''){
+  const e=document.createElement(tag);
+  if(cls) e.className=cls;
+  if(inner) e.innerHTML=inner;
+  return e;
+}
+
+function renderLoading(){
+  return `<div class="state"><div class="spinner"></div><h3>Načítavam jedálny lístok…</h3></div>`;
+}
+
+function renderLogin(){
+  return `<div class="login-screen">
+    <div class="logo">🍲</div>
+    <h1>SUF Obedník</h1>
+    <p>Pre zobrazenie jedálneho lístka sa prosím prihlás do školského systému.</p>
+    <button class="login-btn" onclick="goLogin()">Prihlásiť sa</button>
+  </div>`;
+}
+
+function goLogin(){
+  window.location.href='/index.php/';
+}
+
+function renderMealCode(code){
+  const isSoup=code==='p';
+  return `<span class="meal-code ${isSoup?'code-p':'code-n'}">${isSoup?'Polievka':'Jedlo '+code}</span>`;
+}
+
+function renderAllergens(ids){
+  if(!ids||!ids.length) return '';
+  return `<div class="meal-allergens">${ids.map(id=>`<span class="alg" title="${ALLERGENS[id]||id}">${id}</span>`).join('')}</div>`;
+}
+
+function renderOrderBtn(meal, inModal=false){
+  if(meal.isOrdered && meal.canCancel){
+    return `<button class="order-btn btn-cancel" data-action="cancel" data-meal='${JSON.stringify({mealId:meal.mealId,week:meal.week,cleanName:meal.cleanName})}'>Stornovať</button>`;
+  }
+  if(meal.canOrder){
+    return `<button class="order-btn btn-order" data-action="order" data-meal='${JSON.stringify({mealId:meal.mealId,week:meal.week,cleanName:meal.cleanName})}'>Objednať</button>`;
+  }
+  if(meal.isOrdered){
+    return `<button class="order-btn btn-ordered" disabled>✓ Objednané</button>`;
+  }
+  return '';
+}
+
+// ── Main render ───────────────────────────────────────────────────────────
+function renderApp(){
+  const app=document.getElementById('app');
+  if(state.view==='loading'){app.innerHTML=renderLoading();return;}
+  if(state.view==='login'){app.innerHTML=renderLogin();return;}
+
+  let html=`
+  <div class="hdr">
+    <h1>🍲 SUF Obedník</h1>
+    <div class="hdr-actions">
+      <button class="icon-btn" onclick="goLogin()" title="Pôvodná stránka">🔗</button>
+    </div>
+  </div>
+  <div class="week-nav">
+    <button onclick="loadWeek('${state.prevWeek||''}')" ${!state.prevWeek?'disabled':''}>‹ Predchádzajúci</button>
+    <span class="week-label">${state.weekLabel||'Aktuálny týždeň'}</span>
+    <button onclick="loadWeek('${state.nextWeek||''}')" ${!state.nextWeek?'disabled':''}>Nasledujúci ›</button>
+  </div>`;
+
+  if(!state.days||!state.days.length){
+    html+=`<div class="state"><div class="icon">🗓️</div><h3>Žiadne jedlá</h3><p>Pre tento týždeň nie je k dispozícii jedálny lístok.</p></div>`;
+  } else {
+    state.days.forEach(day=>{
+      html+=`<div class="day">
+        <div class="day-header"><h2>${day.label}</h2></div>`;
+      day.meals.forEach(meal=>{
+        const imgData=imgCacheGet(meal.cleanName);
+        const img=imgData&&imgData.images&&imgData.images.length
+          ? `<img src="${proxyImg(imgData.images[imgData.selectedIndex||0].url)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+          : '🍽️';
+        const countBadge=imgData&&imgData.images&&imgData.images.length>1
+          ? `<span class="count">${(imgData.selectedIndex||0)+1}/${imgData.images.length}</span>`:'';
+        html+=`<div class="meal" data-meal-name="${encodeURIComponent(meal.cleanName)}" onclick="openMealModal(this)">
+          <div class="meal-thumb" id="thumb-${encodeURIComponent(meal.cleanName)}">${img}${countBadge}</div>
+          <div class="meal-info">
+            ${renderMealCode(meal.code)}
+            <div class="meal-name">${meal.cleanName}</div>
+            ${renderAllergens(meal.allergens)}
+          </div>
+          <div class="meal-action">${renderOrderBtn(meal)}</div>
+        </div>`;
+      });
+      html+=`</div>`;
+    });
+  }
+
+  app.innerHTML=html;
+  attachOrderListeners();
+  lazyLoadImages();
+}
+
+// ── Lazy image loading ────────────────────────────────────────────────────
+function lazyLoadImages(){
+  state.days.forEach(day=>{
+    day.meals.forEach(async meal=>{
+      const cached=imgCacheGet(meal.cleanName);
+      if(cached&&!cached.isFallback) return; // already have it
+      const data=await loadImage(meal);
+      updateThumb(meal.cleanName, data);
+    });
+  });
+}
+
+function updateThumb(cleanName, data){
+  const id='thumb-'+encodeURIComponent(cleanName);
+  const el=document.getElementById(id);
+  if(!el) return;
+  if(data&&data.images&&data.images.length){
+    const idx=data.selectedIndex||0;
+    el.innerHTML=`<img src="${proxyImg(data.images[idx].url)}" alt="" loading="lazy" onerror="this.style.display='none'">`;
+    if(data.images.length>1) el.innerHTML+=`<span class="count">${idx+1}/${data.images.length}</span>`;
+  }
+}
+
+// ── Order buttons ─────────────────────────────────────────────────────────
+function attachOrderListeners(){
+  document.querySelectorAll('[data-action]').forEach(btn=>{
+    btn.addEventListener('click',async e=>{
+      e.stopPropagation();
+      const mealInfo=JSON.parse(btn.dataset.meal);
+      const typ=btn.dataset.action==='cancel'?'storno':'objednat';
+      btn.disabled=true; btn.textContent='⏳';
+      const result=await placeOrder(mealInfo,typ);
+      if(result.success){
+        toast(typ==='storno'?'Storno úspešné ✓':'Objednané ✓');
+        await loadWeek(state.currentWeek);
+      } else {
+        toast('Chyba: '+(result.error||'neznáma'),'3000');
+   

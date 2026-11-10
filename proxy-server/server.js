@@ -6,7 +6,7 @@ const https   = require('https');
 const fetch   = require('node-fetch');
 const path    = require('path');
 const zlib    = require('zlib');
-const { URL } = require('url');
+const { URL, URLSearchParams } = require('url');
 
 // Corporate networks often intercept HTTPS with their own certificate.
 // Allow self-signed / corporate CA certs for outbound image search requests.
@@ -15,6 +15,10 @@ const httpsAgent = new https.Agent({ rejectUnauthorized: false });
 const app    = express();
 const PORT   = process.env.PORT || 3000;
 const TARGET = 'http://194.160.223.198';
+
+// Body parsers are scoped to /api routes only — the catch-all reverse proxy
+// reads the raw POST body itself (e.g. the login form), so it must not be consumed here.
+app.use('/api', express.json(), express.urlencoded({ extended: false }));
 
 // ---------------------------------------------------------------------------
 // In-memory image cache
@@ -140,6 +144,172 @@ app.get('/api/image-search', async (req, res) => {
 // Static files (suf-inject.js)
 // ---------------------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------------------------------------------------------------------------
+// GET /app — serve the SPA
+// ---------------------------------------------------------------------------
+// Redirect to the static file so it works both locally (express.static) and on
+// Vercel, where public/ is served by the CDN and express.static is ignored.
+app.get('/app', (req, res) => {
+  res.redirect('/app.html');
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/meals — fetch and parse jidelnicek
+// ---------------------------------------------------------------------------
+app.get('/api/meals', async (req, res) => {
+  const { week } = req.query;
+  const url = week
+    ? `http://194.160.223.198/index.php/obednar/jidelnicek?week=${encodeURIComponent(week)}`
+    : `http://194.160.223.198/index.php/obednar/jidelnicek`;
+
+  let html;
+  try {
+    const upstream = await fetch(url, {
+      redirect: 'manual',
+      headers: {
+        'cookie': req.headers['cookie'] || '',
+        'User-Agent': 'Mozilla/5.0',
+      },
+    });
+    if (upstream.status === 301 || upstream.status === 302) {
+      return res.status(401).json({ error: 'not_logged_in' });
+    }
+    html = await upstream.text();
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+
+  if (/name=["']heslo["']|name=["']login["']|prihlasenie|prihlásenie/i.test(html)) {
+    return res.status(401).json({ error: 'not_logged_in' });
+  }
+
+  // --- Week nav ---
+  const weekMatches = [...html.matchAll(/href=["'][^"']*week=(\d+)[^"']*/gi)];
+  const prevWeek = weekMatches[0] ? weekMatches[0][1] : null;
+  const nextWeek = weekMatches[1] ? weekMatches[1][1] : null;
+
+  const weekLabelM = html.match(/(\d{1,2}\.\s*\d{1,2}\.[\s\S]{0,30}?\d{4})/);
+  const weekLabel = weekLabelM ? weekLabelM[1].replace(/\s+/g, ' ').trim() : '';
+
+  // --- Extract week field value from hidden inputs ---
+  function extractWeekFromHtml(rowHtml) {
+    const m = rowHtml.match(/name=["']week["'][^>]*value=["'](\d+)["']/) ||
+              rowHtml.match(/value=["'](\d+)["'][^>]*name=["']week["']/);
+    return m ? m[1] : (week || null);
+  }
+
+  // --- Parse table rows ---
+  const days = [];
+  let currentDay = null;
+
+  const rowRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi;
+  let rowMatch;
+  while ((rowMatch = rowRe.exec(html)) !== null) {
+    const rowHtml = rowMatch[1];
+    const cells = [];
+    const cellRe = /<td[^>]*>([\s\S]*?)<\/td>/gi;
+    let cellMatch;
+    while ((cellMatch = cellRe.exec(rowHtml)) !== null) {
+      cells.push(cellMatch[1]);
+    }
+    if (cells.length === 0) continue;
+
+    const cell0text = cells[0].replace(/<[^>]+>/g, '').trim();
+
+    // Day header detection
+    const colspanM = cells[0] && /<td[^>]*colspan=["']?(\d+)/i.exec(rowHtml);
+    const colspan = colspanM ? parseInt(colspanM[1]) : 1;
+    if (
+      colspan > 1 ||
+      /pondelok|utorok|streda|štvrtok|piatok/i.test(cell0text)
+    ) {
+      // Extract date key
+      const dateM = cell0text.match(/(\d{1,2})\.(\d{1,2})\./);
+      let dateKey = null;
+      let label = cell0text.replace(/\s+/g, ' ').trim();
+      if (dateM) {
+        const yr = new Date().getFullYear();
+        const mo = dateM[2].padStart(2, '0');
+        const da = dateM[1].padStart(2, '0');
+        dateKey = `${yr}${mo}${da}`;
+      }
+      currentDay = { label, dateKey, meals: [] };
+      days.push(currentDay);
+      continue;
+    }
+
+    // Meal row detection
+    if (/^[p1-9]$/i.test(cell0text) && currentDay) {
+      const rawNameHtml = cells[1] || '';
+      const rawName = rawNameHtml.replace(/<[^>]+>/g, '').trim();
+      const cleanName = rawName.replace(/\{[\s\S]*?\}/g, '').trim();
+
+      // Allergens
+      const allergenM = rawName.match(/\{[\s\S]*?alerg[eé]ny?[\s\S]*?([0-9,\s\/]+)[\s\S]*?\}/is);
+      const allergens = allergenM
+        ? allergenM[1].split(/[,\/]/).map(a => a.trim()).filter(Boolean)
+        : [];
+
+      // mealId
+      const mealIdM = rowHtml.match(/name=["']id\[\]["'][^>]*value=["'](\d+)["']/) ||
+                      rowHtml.match(/value=["'](\d+)["'][^>]*name=["']id\[\]["']/);
+      const mealId = mealIdM ? mealIdM[1] : null;
+
+      const rowWeek = extractWeekFromHtml(rowHtml);
+      const isOrdered = /storno/i.test(rowHtml);
+      const canCancel = isOrdered;
+      const canOrder = /objednať/i.test(rowHtml) && !isOrdered;
+
+      currentDay.meals.push({
+        code: cell0text.toLowerCase(),
+        rawName,
+        cleanName,
+        allergens,
+        mealId,
+        week: rowWeek,
+        isOrdered,
+        canOrder,
+        canCancel,
+      });
+    }
+  }
+
+  res.json({ days, prevWeek, nextWeek, weekLabel });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/order — place or cancel a meal order
+// ---------------------------------------------------------------------------
+app.post('/api/order', async (req, res) => {
+  const { mealId, week, typ } = req.body;
+  if (!mealId || !week || !typ) return res.status(400).json({ error: 'Missing fields' });
+
+  const params = new URLSearchParams();
+  params.append('id[]', mealId);
+  params.append('week', week);
+  params.append('typ', typ);
+
+  try {
+    const upstream = await fetch('http://194.160.223.198/index.php/obednar/objednat', {
+      method: 'POST',
+      redirect: 'manual',
+      headers: {
+        'cookie': req.headers['cookie'] || '',
+        'content-type': 'application/x-www-form-urlencoded',
+        'referer': 'http://194.160.223.198/index.php/obednar/jidelnicek',
+        'User-Agent': 'Mozilla/5.0',
+      },
+      body: params.toString(),
+    });
+    if (upstream.status === 302 || (upstream.status >= 200 && upstream.status < 300)) {
+      return res.json({ success: true });
+    }
+    return res.status(500).json({ error: `Unexpected status ${upstream.status}` });
+  } catch (err) {
+    return res.status(502).json({ error: err.message });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // HTML injection + URL rewriting helpers
@@ -282,8 +452,13 @@ app.use('/', (clientReq, clientRes) => {
 // ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`\n✅ SUF Obedník proxy running at http://localhost:${PORT}`);
-  console.log(`   Proxying → ${TARGET}`);
-  console.log(`   On your phone (same WiFi): http://<your-local-IP>:${PORT}\n`);
-});
+// On Vercel the exported app is wrapped as a serverless function; locally we listen.
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`\n✅ SUF Obedník proxy running at http://localhost:${PORT}`);
+    console.log(`   Proxying → ${TARGET}`);
+    console.log(`   On your phone (same WiFi): http://<your-local-IP>:${PORT}\n`);
+  });
+}
+
+module.exports = app;
